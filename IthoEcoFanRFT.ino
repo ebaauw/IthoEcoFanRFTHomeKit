@@ -9,7 +9,6 @@
  * Tested with Arduino IDE v1.6.5 and 1.6.9
  * For ESP8266 tested with ESP8266 core for Arduino v 2.1.0 and 2.2.0 Stable
  * (See https://github.com/esp8266/Arduino/ )
- * 
  */
 
 /*
@@ -26,149 +25,222 @@ CC11xx pins    ESP pins Arduino pins  Description
 */
 
 #include <SPI.h>
+#include <arduino_homekit_server.h>
 #include "IthoCC1101.h"
 #include "IthoPacket.h"
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include "wifi_info.h"
 
-ESP8266WebServer server;
-char* ssid = "wifissid";
-char* password = "************";
+#define LOG_D(fmt, ...)   printf_P(PSTR(fmt "\n") , ##__VA_ARGS__);
+
+typedef enum Speed 
+{
+  SpeedIgnore = 0,
+  SpeedStandby = 1, 
+  SpeedLow = 2, 
+  SpeedMedium = 3,
+  SpeedHigh  = 4,
+  SpeedFull  = 5
+};
+
+char *speed_to_string[] = {"ignore", "standby", "low", "medium", "high", "full"};
+
+typedef enum Action 
+{
+  ActionDeactivate = 1, 
+  ActionActivate = 2,
+  ActionSpeedStandby = 3,
+  ActionSpeedLow = 4,
+  ActionSpeedMedium = 5,
+  ActionSpeedHigh = 6,
+  ActionSpeedFull = 7
+};
+
+char *action_to_string[] = {"none", "deactivate", "activate", "standby", "low", "medium", "high", "full"};
 
 IthoCC1101 rf;
 IthoPacket packet;
+Speed current_speed = SpeedStandby;
+Speed last_speed = SpeedStandby;
+
+// access the HomeKit characteristics defined in fan_accessory.c
+extern "C" homekit_server_config_t config;
+extern "C" homekit_characteristic_t ch_fan_active;
+extern "C" homekit_characteristic_t ch_fan_rotation_speed;
+
+static uint32_t next_heap_millis = 0;
 
 void setup(void) {
   Serial.begin(115200);
 
-  // connect to wifi
-	
-  /* Explicitly set the ESP8266 to be a WiFi-client, otherwise, it by default,
-     would try to act as both a client and an access-point and could cause
-     network-issues with your other WiFi-devices on your WiFi-network. */
-  WiFi.mode(WIFI_STA);
-	
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-  }
-  Serial.println("");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+  wifi_connect(); 
+  // homekit_storage_reset(); // to remove the previous HomeKit pairing storage when you first run this new HomeKit example
+  homekit_setup();
 
-  // server setup
-  server.on("/", usage);
-  server.on("/press", pressButton);
-  server.begin();
-  Serial.println("Server started");
-  
-
-  
   delay(500);
-  //Serial.println("setup begin");
+  Serial.println("setup begin");
   rf.init();
-  //Serial.println("setup done");
+  Serial.println("setup done");
   sendRegister();
-  //Serial.println("join command sent");
+  Serial.println("join command sent");
 }
 
-void loop(void) {
-  server.handleClient();
+void loop() {
+  homekit_loop();
+  delay(10);
+}
 
-  return;
+// Called when the fan value is enabled/disabled by iOS Home APP
+void ch_fan_active_setter(const homekit_value_t value) {
+  LOG_D("Active: %d", value.bool_value);
   
-	//set CC1101 registers
-	rf.initReceive();
-	Serial.print("start\n");
-	sei();
-
-	while (1==1) {
-		if (rf.checkForNewPacket()) {
-			packet = rf.getLastPacket();
-			//show counter
-			Serial.print("counter=");
-			Serial.print(packet.counter);
-			Serial.print(", ");
-			//show command
-			switch (packet.command) {
-        case IthoUnknown:
-          Serial.print("unknown\n");
-          break;
-        case IthoLow:
-          Serial.print("low\n");
-          break;
-        case IthoMedium:
-          Serial.print("medium\n");
-          break;
-        case IthoFull:
-          Serial.print("full\n");
-          break;
-        case IthoTimer1:
-          Serial.print("timer1\n");
-          break;
-        case IthoTimer2:
-          Serial.print("timer2\n");
-          break;
-        case IthoTimer3:
-          Serial.print("timer3\n");
-          break;
-        case IthoJoin:
-          Serial.print("join\n");
-          break;
-        case IthoLeave:
-          Serial.print("leave\n");
-          break;
-			} // switch (recv) command
-		} // checkfornewpacket
-	yield();
-	} // while 1==1
-} // outer loop
-
-void usage() {
-  server.send(200, "text/plain", "/press?button=low");
+  switch (value.bool_value) {
+    case true:  transition(ActionActivate); break;
+    case false: transition(ActionDeactivate); break;
+  }
 }
 
-void pressButton() {
-   if (!server.hasArg("button")) {
-       return returnFail("Please provide a button, e.g. ?button=low");
-   }
-   
-   String button = server.arg("button");
-   Serial.print("Pressing button: ");
-   Serial.println(button);
+// Called when the fan rotation speed is changed by iOS Home APP
+void ch_fan_rotation_speed_setter(const homekit_value_t value) {
+  LOG_D("Rotation speed: %.6f", value.float_value); 
 
-   if (button == "low") { 
-       sendLowSpeed();
-   } else if (button == "medium") { 
-       sendMediumSpeed();
-   } else if (button == "high") { 
-       sendFullSpeed();
-   } else if (button == "timer") {     
-       sendTimer();
-   } else {
-      return returnFail("Unknown button. Buttons are: low, medium, high, timer");
-   }
+  if (compare_float(value.float_value, 0.0)) {
+    transition(ActionSpeedStandby); 
+  } else if (compare_float(value.float_value, 1)) {
+    transition(ActionSpeedLow); 
+  } else if (compare_float(value.float_value, 2)) {
+    transition(ActionSpeedMedium);
+  } else if (compare_float(value.float_value, 3)) {
+    transition(ActionSpeedHigh);
+  } else if (compare_float(value.float_value, 4)) {
+    transition(ActionSpeedFull);
+  } 
+}
+
+Speed get_next_speed(Speed current_speed, Action action) {
+  switch (current_speed) {
+      case SpeedStandby:
+        switch (action) {
+          case ActionActivate: return last_speed != SpeedStandby ? last_speed : SpeedLow;
+          case ActionSpeedLow: return SpeedLow; 
+          case ActionSpeedMedium: return SpeedMedium; 
+          case ActionSpeedHigh: return SpeedHigh; 
+          case ActionSpeedFull: return SpeedFull; 
+        }
+        break;
+        
+      case SpeedLow:
+        switch (action) {
+          case ActionDeactivate: return SpeedStandby; 
+          case ActionSpeedMedium: return SpeedMedium; 
+          case ActionSpeedHigh: return SpeedHigh; 
+          case ActionSpeedFull: return SpeedFull; 
+        }
+        break;
+
+      case SpeedMedium:
+        switch (action) {
+          case ActionDeactivate: return SpeedStandby; 
+          case ActionSpeedLow: return SpeedLow; 
+          case ActionSpeedHigh: return SpeedHigh; 
+          case ActionSpeedFull: return SpeedFull;
+        }
+        break;
+        
+      case SpeedHigh:
+        switch (action) {
+          case ActionDeactivate: return SpeedStandby;
+          case ActionSpeedLow: return SpeedLow; 
+          case ActionSpeedMedium: return SpeedMedium; 
+          case ActionSpeedFull: return SpeedFull;
+        }
+        break;
+
+      case SpeedFull:
+        switch (action) {
+          case ActionDeactivate: return SpeedStandby;
+          case ActionSpeedLow: return SpeedLow; 
+          case ActionSpeedMedium: return SpeedMedium; 
+          case ActionSpeedHigh: return SpeedHigh; 
+        }
+        break;        
+    }
+    
+    return SpeedIgnore;
+}
+
+void transition(Action action) {
+    Speed next_speed = get_next_speed(current_speed, action);
+
+    LOG_D("Transition. Current speed: %s, action: %s, next speed: %s", 
+      speed_to_string[current_speed], 
+      action_to_string[action], 
+      speed_to_string[next_speed]); 
   
-   returnJson("\"button\": \"" + button + "\"");
+    if (next_speed == SpeedIgnore || current_speed == next_speed) {
+      LOG_D("Already good. Skipping transition.");
+      
+      return;
+    }
+
+    // Change internal state
+    last_speed = current_speed;
+    current_speed = next_speed;
+    
+    // Change Homekit state
+    ch_fan_active.value.bool_value = next_speed != SpeedStandby; 
+    ch_fan_rotation_speed.value.int_value = next_speed - 1;  
+
+    // Change fan speed state
+    if (next_speed == SpeedStandby) {
+      sendStandbySpeed();
+    } else if (next_speed == SpeedLow) {
+      sendLowSpeed();
+    } else if (next_speed == SpeedMedium) {
+      sendMediumSpeed();
+    } else if (next_speed == SpeedHigh) {
+      sendHighSpeed();
+    } else if (next_speed == SpeedFull) {
+      sendFullSpeed();
+    }
 }
 
-void returnJson(String msg)
-{
-    server.send(200, "application/json", "{\"success\": true, "+  msg + "}");
+void homekit_setup() {
+  ch_fan_active.setter = ch_fan_active_setter;
+  ch_fan_rotation_speed.setter = ch_fan_rotation_speed_setter;
+  arduino_homekit_setup(&config);
+
+  //report the switch value to HomeKit if it is changed (e.g. by a physical button)
+  //homekit_characteristic_notify(&ch_fan_active, ch_fan_active.value);
 }
 
-void returnFail(String msg)
-{
-    server.sendHeader("Connection", "close");
-    server.send(500, "application/json", "{\"success\": false, \"message\": \""+ msg + "\"}");
+void homekit_loop() {
+  arduino_homekit_loop();
+  const uint32_t t = millis();
+  if (t > next_heap_millis) {
+    // show heap info every 30 seconds
+    next_heap_millis = t + 30 * 1000;
+    LOG_D("Free heap: %d, HomeKit clients: %d", ESP.getFreeHeap(), arduino_homekit_connected_clients_count());
+  }
 }
+
+//void sendCommand(IthoCommand command) {
+//  LOG_D("Sending %d...", command)
+//  rf.sendCommand(command);
+//  LOG_D("Sending %d done", command)
+//}
 
 void sendRegister() {
    Serial.println("sending join...");
    rf.sendCommand(IthoJoin);
    Serial.println("sending join done.");
 }
+
+void sendStandbySpeed() {
+  Serial.println("sending standby...");
+  rf.sendCommand(IthoStandby);
+  Serial.println("sending standby done.");
+}
+
 
 void sendLowSpeed() {
    Serial.println("sending low...");
@@ -180,6 +252,12 @@ void sendMediumSpeed() {
    Serial.println("sending medium...");
    rf.sendCommand(IthoMedium);
    Serial.println("sending medium done.");
+}
+
+void sendHighSpeed() {
+  Serial.println("sending high...");
+  rf.sendCommand(IthoHigh);
+  Serial.println("sending high done.");
 }
 
 void sendFullSpeed() {
@@ -194,3 +272,16 @@ void sendTimer() {
    Serial.println("sending timer done.");
 }
 
+ int compare_float(float f1, float f2)
+ {
+  float precision = 0.00001;
+  if (((f1 - precision) < f2) && 
+      ((f1 + precision) > f2))
+   {
+    return 1;
+   }
+  else
+   {
+    return 0;
+   }
+ }

@@ -13,7 +13,8 @@ typedef enum IthoCommand
 		
 	IthoJoin = 4,
 	IthoLeave = 8,
-				
+
+        
 	IthoLow = 35,	
 	IthoMedium = 36,	
 	IthoFull = 37,
