@@ -13,11 +13,12 @@ CC11xx pins    ESP pins Arduino pins  Description
 *  3 - MOSI       13=D7    Pin 11        Data input to CC11xx
 *  4 - SCK        14=D5    Pin 13        Clock pin
 *  5 - MISO/GDO1  12=D6    Pin 12        Data output from CC11xx / serial clock from CC11xx
-*  6 - GDO2       ?        Pin  ?        Programmable output
+*  6 - GDO2       04=D2    Pin  2        Programmable output
 *  7 - GDO0       ?        Pin  ?        Programmable output
 *  8 - CSN        15=D8    Pin 10        Chip select / (SPI_SS)
 ```
-Note that CC11xx pins GDO0 and GDO2 are not used (yet).
+Note that CC11xx pin GDO0 is not used.
+Also note that the GDO2 pin connected to pin 2 on an Arduino. Change ```#define ITHO_IRQ_PIN``` in the example ino accordingly.
 
 You should keep the wires to the CC11xx module as short as possible.
 
@@ -26,4 +27,5 @@ This won't be a problem with an ESP8266, but for Arduino you either need to use 
 
 For use with an ESP8266, you will need the ESP8266 core for Arduino from https://github.com/esp8266/Arduino
 
-For SPI, pins 12-15 ()aka D5-D8) are used, a larger ESP8266 model like (but not only) the ESP-03, ESP-07, ESP-12(D, E) or a NodeMCU board is required.
+For SPI, pins 12-15 (aka D5-D8) are used. 
+A larger ESP8266 model like (but not only) the ESP-03, ESP-07, ESP-12(D, E) or a NodeMCU board is required.
