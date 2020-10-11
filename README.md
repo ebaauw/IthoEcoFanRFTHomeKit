@@ -1,6 +1,5 @@
-# IthoEcoFanRFT
-Fork from supersjimmie, modified to add a HTTP API.
-Integrates with a [Homebridge plugin to control the Itho CVE Eco RFT](https://github.com/adri/homebridge-itho-cve-eco-rft).
+# IthoEcoFanRFT with HomeKit Support
+Fork from supersjimmie, modified to add HomeKit support.
 
 Will work with a 868MHz CC1101 module.
 The CC1150 may also work, except for receiving (which is not required for controlling an Itho EcoFan).
