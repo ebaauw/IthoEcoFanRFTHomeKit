@@ -6,3 +6,4 @@
 *.hex
 Master/*
 wifi_info.h
+.DS_Store
