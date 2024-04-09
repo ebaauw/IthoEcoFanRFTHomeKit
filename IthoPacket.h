@@ -5,14 +5,13 @@
 #ifndef ITHOPACKET_H_
 #define ITHOPACKET_H_
 
-
-typedef enum IthoMessageType
- {
+enum IthoMessageType
+{
  	ithomsg_unknown = 0,
  	ithomsg_control = 1,
  	ithomsg_join = 2,
  	ithomsg_leave = 3
- };
+};
  
  //do not change enum because they are used in calculations!
 enum IthoCommand
